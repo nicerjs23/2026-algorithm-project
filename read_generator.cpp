@@ -33,8 +33,8 @@
 static const std::string IN_ORIGINAL  = "original_1M.txt";
 static const std::string OUT_READS    = "reads.txt";
 
-static const int      READ_LENGTH = 100;    // read 길이 (bp)
-static const int      NUM_READS   = 10000;  // 생성할 read 수
+static const int      READ_LENGTH = 30;      // read 길이 (bp) - 팀 공통 L=30
+static const int      NUM_READS   = 100000;  // 생성할 read 수 - 팀 공통 M=100,000
 static const unsigned SEED        = 42;     // 고정 시드 (팀 공통)
 // ──────────────────────────────────────────────────────────────
 
