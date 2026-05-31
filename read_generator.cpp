@@ -38,12 +38,14 @@ static const int      NUM_READS   = 100000;  // 생성할 read 수 - 팀 공통 
 static const unsigned SEED        = 42;     // 고정 시드 (팀 공통)
 // ──────────────────────────────────────────────────────────────
 
-int main() {
+// original_1M.txt 에서 랜덤 위치를 잡아 길이 READ_LENGTH 의 read 를 NUM_READS 개 생성한다.
+// 성공하면 true, 실패하면 false 반환.
+bool generate_reads() {
     // ── original 로드 ──
     std::ifstream fin(IN_ORIGINAL);
     if (!fin.is_open()) {
         std::cerr << "[오류] " << IN_ORIGINAL << " 열기 실패. 같은 폴더에 있는지 확인하세요.\n";
-        return 1;
+        return false;
     }
     std::string original;
     std::getline(fin, original);
@@ -52,7 +54,7 @@ int main() {
     if ((int)original.size() < READ_LENGTH) {
         std::cerr << "[오류] original 길이(" << original.size()
                   << ")가 READ_LENGTH(" << READ_LENGTH << ")보다 짧습니다.\n";
-        return 1;
+        return false;
     }
     std::cout << "[로드] original 길이: " << original.size() << " 염기\n";
 
@@ -60,7 +62,7 @@ int main() {
     std::ofstream fout(OUT_READS);
     if (!fout.is_open()) {
         std::cerr << "[오류] " << OUT_READS << " 생성 실패.\n";
-        return 1;
+        return false;
     }
     fout << "read_id\tstart_pos\tsequence\n";
 
@@ -77,5 +79,5 @@ int main() {
     std::cout << "       read " << NUM_READS << "개 / 길이 " << READ_LENGTH << "bp / SEED=" << SEED << "\n";
     std::cout << "       3번(KMP), 4번(Seed-and-Extend)은 이 파일을 공통 입력으로 사용하세요.\n";
 
-    return 0;
+    return true;
 }
