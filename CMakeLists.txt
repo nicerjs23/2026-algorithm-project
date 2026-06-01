@@ -3,4 +3,8 @@ project(2026_algorithm_project)
 
 set(CMAKE_CXX_STANDARD 17)
 
-add_executable(2026_algorithm_project main.cpp)
+# 파이프라인: main -> reference_builder -> read_generator
+add_executable(2026_algorithm_project
+        main.cpp
+        reference_builder.cpp
+        read_generator.cpp)
