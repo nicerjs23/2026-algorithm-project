@@ -34,8 +34,8 @@
 #include <chrono>
 
 // ──────────────── 파라미터 ────────────────
-static const std::string IN_REFERENCE = "reference_genome.txt";
-static const std::string IN_READS     = "reads.txt";
+static const std::string IN_REFERENCE = "reference_synthetic.txt";
+static const std::string IN_READS     = "reads_synthetic.txt";
 static const std::string OUT_RESULT   = "result_bwt.txt";
 
 static const int D        = 2;    // 최대 허용 mismatch

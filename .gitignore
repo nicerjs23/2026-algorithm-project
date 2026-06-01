@@ -30,10 +30,11 @@ a.out
 *.fasta
 
 # ===== 생성된 데이터 파일 (코드 실행 시 자동 생성) =====
-original_1M.txt
-reference_genome.txt
-snp_list.txt
-reads.txt
+original_*.txt
+reference_*.txt
+snp_list_*.txt
+reads_*.txt
+result_*.txt
 
 # 참고: .idea/ 는 CLion이 만든 .idea/.gitignore 가
 #       변동 파일(workspace.xml 등)만 골라서 무시하므로 따로 건드리지 않음.
