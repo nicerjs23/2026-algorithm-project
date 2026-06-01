@@ -62,9 +62,33 @@ Reference 기반 (seed-and-extend, 비둘기집 원리) short-read 매칭을 위
 - 난수: `std::mt19937(SEED=42)`, `uniform_int_distribution` 사용
   → `rand()` 의 짧은 주기/패턴 문제 없음
 
+### `trap_generator.cpp` — Trap Read 생성기 (역할2, 김세훈)
+
+12개 실험 조합을 위한 **3가지 조건의 read 데이터셋** 생성. 별도 실행파일로 독립 실행.
+
+```bash
+g++ -O2 -std=c++17 -o trap_generator trap_generator.cpp
+./trap_generator
+```
+
+> `original_synthetic_1M.txt` 가 같은 폴더에 있어야 함 (main pipeline 먼저 실행)
+
+**실행 결과로 생성되는 파일**
+
+| 출력 파일              | 조건                              | 실험 목적                                      |
+| ---------------------- | --------------------------------- | ---------------------------------------------- |
+| `reads_baseline.txt`   | 에러 없음 (깨끗한 read)           | 순수 탐색 속도 비교 기준선                     |
+| `reads_indel.txt`      | InDel 1~2개 주입, 치환 없음       | 길이 변화 발생 시 brute-force 격파 검증        |
+| `reads_end_heavy.txt`  | 앞 20bp 완벽 + 뒤 10bp 에러 2개  | Seed-and-Extend 전략 타당성 증명               |
+
+- **SNP 비율별 reference 4종 (이동건) × read 조건 3종 = 12개 실험 조합**
+- InDel은 read에 주입 (시퀀서 기계 오류 시뮬레이션), SNP는 reference에만 존재
+- SEED 독립 적용 (SEED / SEED+1 / SEED+2) → 각 조건 재현 가능
+
 ### `CMakeLists.txt`
 
-- 세 cpp 를 하나의 실행파일 `2026_algorithm_project` 로 묶어 빌드
+- `main.cpp` + `reference_builder.cpp` + `read_generator.cpp` → 실행파일 `2026_algorithm_project`
+- `trap_generator.cpp` → 별도 실행파일 `trap_generator`
 
 ---
 
