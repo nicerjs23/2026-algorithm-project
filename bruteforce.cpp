@@ -3,8 +3,14 @@
 #include <vector>
 #include <string>
 #include <ctime>
-#include <windows.h>
-#include <psapi.h>
+
+// ---- 플랫폼별 메모리 측정 / 콘솔 인코딩 분기 ----
+#ifdef _WIN32
+  #include <windows.h>
+  #include <psapi.h>
+#else
+  #include <sys/resource.h>
+#endif
 
 using namespace std;
 
@@ -19,9 +25,19 @@ struct Result {
 };
 
 double check_memory() {
+#ifdef _WIN32
     PROCESS_MEMORY_COUNTERS pmc;
     GetProcessMemoryInfo(GetCurrentProcess(), &pmc, sizeof(pmc));
     return (double)pmc.WorkingSetSize / (1024.0 * 1024.0);
+#else
+    struct rusage ru;
+    getrusage(RUSAGE_SELF, &ru);
+  #ifdef __APPLE__
+    return (double)ru.ru_maxrss / (1024.0 * 1024.0);
+  #else
+    return (double)ru.ru_maxrss / 1024.0;
+  #endif
+#endif
 }
 
 string readReference(const string& filename) {
@@ -81,7 +97,9 @@ int bruteForceSearch(const string& text, const string& pattern, int mismatch = 2
 }
 
 int main() {
-    SetConsoleOutputCP(65001);
+#ifdef _WIN32
+    SetConsoleOutputCP(65001);  // Windows 콘솔 UTF-8
+#endif
     cout << "데이터 로딩 중...\n";
     string reference_genome = readReference("reference_synthetic.txt");
     vector<Read> reads      = readReads("reads_synthetic.txt");

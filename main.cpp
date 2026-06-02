@@ -7,7 +7,11 @@
 // =============================================================
 
 #include <iostream>
+
+// Windows 콘솔에서 한글 깨짐 방지용. macOS/Linux 는 UTF-8 이 기본이라 불필요.
+#ifdef _WIN32
 #include <windows.h>
+#endif
 
 // 다른 .cpp 파일에 정의된 함수 선언 (헤더 대신 한 줄로)
 bool build_reference(double snp_rate);
@@ -18,7 +22,9 @@ static const double SNP_RATE = 0.001;  // SNP 비율: 0.001 = 0.1%
 // -----------------------------------------
 
 int main() {
-    SetConsoleOutputCP(65001);
+#ifdef _WIN32
+    SetConsoleOutputCP(65001);  // Windows 콘솔 UTF-8 (한글 깨짐 방지)
+#endif
 
     std::cout << "=== [1단계] reference 게놈 생성 (SNP "
               << (SNP_RATE * 100) << "%) ===\n";
