@@ -4,6 +4,8 @@
 #include <vector>
 #include <algorithm>
 #include <chrono>
+#include <sys/time.h>
+#include <sys/resource.h>
 
 using namespace std;
 
@@ -233,16 +235,28 @@ int main() {
     auto startTime = chrono::high_resolution_clock::now();
 
     // 1. 파일 읽기
-    string ref      = load_reference("reference_synthetic.txt");
-    vector<Read> reads = load_reads("reads_synthetic.txt");
-    string original = load_original("original_synthetic_1M.txt");
+    // [1] Baseline (에러 없는 깨끗한 read) - 인공 서열
+    string ref         = load_reference("reference_synthetic.txt");
+    vector<Read> reads = load_reads("reads_baseline.txt");
+    string original    = load_original("original_synthetic_1M.txt");
 
-    //string ref = load_reference("reference_yeast.txt");
+    // [2] 빵효모 (반복서열 영향 확인)
+    //string ref         = load_reference("reference_yeast.txt");
     //vector<Read> reads = load_reads("reads_yeast.txt");
-    //string original = load_original("original_yeast_1M.txt");
+    //string original    = load_original("original_yeast_1M.txt");
+
+    // [3] InDel (삽입/결실 폭격 - DP 가 빛나는 환경)
+    //string ref         = load_reference("reference_synthetic.txt");
+    //vector<Read> reads = load_reads("reads_indel.txt");
+    //string original    = load_original("original_synthetic_1M.txt");
+
+    // [4] End-Heavy (read 후반부에 에러 집중)
+    //string ref         = load_reference("reference_synthetic.txt");
+    //vector<Read> reads = load_reads("reads_end_heavy.txt");
+    //string original    = load_original("original_synthetic_1M.txt");
 
     if (ref.empty() || reads.empty()) {
-        cout << "데이터가 비어있습니다." << endl;
+        cout << "데이터 로딩 실패" << endl;
         return 1;
     }
 
@@ -259,7 +273,6 @@ int main() {
     for (int i = 0; i < (int)reads.size(); i++) {
         positions[i] = mapRead(sa, ref, reads[i].sequence, k, max_mismatch);
         if (positions[i] != -1) mapped++;
-
     }
 
     // 4. 서열 복원
@@ -294,7 +307,6 @@ int main() {
     if (fout.is_open()) {
         fout << ">reconstructed_sequence_SA_mapped\n";
 
-        // 생물정보학 표준 FASTA 형식에 맞게 80글자마다 줄바꿈을 해줍니다.
         for (size_t i = 0; i < assembled.size(); i += 80) {
             fout << assembled.substr(i, 80) << "\n";
         }
