@@ -115,10 +115,15 @@ int main() {
     SetConsoleOutputCP(65001);
 
     cout << "데이터 로딩 중...\n";
+    
+    // 인공서열
     string reference_genome = readReference("reference_synthetic.txt");
-    vector<Read> reads      = readReads("reads_synthetic.txt");
+    vector<Read> reads      = readReads("reads_baseline.txt");
+    // vector<Read> reads = readReads("reads_indel.txt");
+    // vector<Read> reads = readReads("reads_end_heavy.txt");
     string original_seq     = readReference("original_synthetic_1M.txt");
 
+    // 효모
     //string reference_genome = readReference("reference_yeast.txt");
     //vector<Read> reads      = readReads("reads_yeast.txt");
     //string original_seq     = readReference("original_yeast_1M.txt");
@@ -131,10 +136,10 @@ int main() {
     int N = reference_genome.length();
     string reconstructed_seq(N, '-');
 
-    cout << "1. Red-Black Tree 기반 Seed 색인 구축 중...\n";
+    cout << "Index 테이블 생성 중...\n";
     map<string, vector<int>> seed_index = buildSeedIndex(reference_genome, K_MER);
 
-    cout << "2. 비둘기집 원리가 적용된 Seed-and-Extend 매핑 시작...\n";
+    cout << "Seed-and-Extend 매핑 시작...\n";
     clock_t start_time = clock();
 
     int mapped_count = 0;
