@@ -101,10 +101,15 @@ int main() {
     SetConsoleOutputCP(65001);  // Windows 콘솔 UTF-8
 #endif
     cout << "데이터 로딩 중...\n";
+
+    // 인공서열
     string reference_genome = readReference("reference_synthetic.txt");
-    vector<Read> reads      = readReads("reads_synthetic.txt");
+    vector<Read> reads      = readReads("reads_baseline.txt");
+    // vector<Read> reads = readReads("reads_indel.txt");
+    // vector<Read> reads = readReads("reads_end_heavy.txt");
     string original_seq     = readReference("original_synthetic_1M.txt");
 
+    // 효모
     //string reference_genome = readReference("reference_yeast.txt");
     //vector<Read> reads      = readReads("reads_yeast.txt");
     //string original_seq     = readReference("original_yeast_1M.txt");
