@@ -4,6 +4,8 @@
 #include <vector>
 #include <algorithm>
 #include <chrono>
+#include <sys/time.h>
+#include <sys/resource.h>
 
 using namespace std;
 
@@ -229,13 +231,13 @@ double calcAccuracy(const string& original, const string& assembled) {
 }
 
 // ── main ──
-/*int main() {
+int main() {
     auto startTime = chrono::high_resolution_clock::now();
 
     // 1. 파일 읽기
-    // [1] 인공 서열
+    // [1] Baseline (에러 없는 깨끗한 read) - 인공 서열
     string ref         = load_reference("reference_synthetic.txt");
-    vector<Read> reads = load_reads("reads_synthetic.txt");
+    vector<Read> reads = load_reads("reads_baseline.txt");
     string original    = load_original("original_synthetic_1M.txt");
 
     // [2] 빵효모 (반복서열 영향 확인)
@@ -243,17 +245,12 @@ double calcAccuracy(const string& original, const string& assembled) {
     //vector<Read> reads = load_reads("reads_yeast.txt");
     //string original    = load_original("original_yeast_1M.txt");
 
-    // [3] Baseline (에러 없는 깨끗한 read)
-    //string ref         = load_reference(reference_synthetic.txt");
-    //vector<Read> reads = load_reads("reads_baseline.txt");
-    //string original    = load_original("original_synthetic_1M.txt");
-
-    // [4] InDel (삽입/결실 폭격 - DP 가 빛나는 환경)
+    // [3] InDel (삽입/결실 폭격 - DP 가 빛나는 환경)
     //string ref         = load_reference("reference_synthetic.txt");
     //vector<Read> reads = load_reads("reads_indel.txt");
     //string original    = load_original("original_synthetic_1M.txt");
 
-    // [5] End-Heavy (read 후반부에 에러 집중)
+    // [4] End-Heavy (read 후반부에 에러 집중)
     //string ref         = load_reference("reference_synthetic.txt");
     //vector<Read> reads = load_reads("reads_end_heavy.txt");
     //string original    = load_original("original_synthetic_1M.txt");
@@ -276,7 +273,6 @@ double calcAccuracy(const string& original, const string& assembled) {
     for (int i = 0; i < (int)reads.size(); i++) {
         positions[i] = mapRead(sa, ref, reads[i].sequence, k, max_mismatch);
         if (positions[i] != -1) mapped++;
-
     }
 
     // 4. 서열 복원
@@ -311,143 +307,10 @@ double calcAccuracy(const string& original, const string& assembled) {
     if (fout.is_open()) {
         fout << ">reconstructed_sequence_SA_mapped\n";
 
-        // 생물정보학 표준 FASTA 형식에 맞게 80글자마다 줄바꿈을 해줍니다.
         for (size_t i = 0; i < assembled.size(); i += 80) {
             fout << assembled.substr(i, 80) << "\n";
         }
         fout.close();
-    }
-
-    return 0;
-}*/
-int main() {
-    // =========================================================================
-    // [사용자 설정 파트]
-    // 코드를 실행하기 전에 현재 돌리는 데이터셋의 정보를 여기에 적어주세요!
-    // 이 정보가 그대로 CSV 파일에 기록됩니다.
-    // =========================================================================
-    string current_algorithm = "sa_minimizer";
-    string current_snp       = "0.1%";       // 예: 0.1%, 1.0%, 2.0%, 5.0%
-    string current_dataset   = "yeast";  // 예: synthetic, baseline, indel, end_heavy
-    // =========================================================================
-
-    // 1. 파일 읽기 (수빈님이 하시던 대로 주석 풀고 닫기 하시면 됩니다)
-    // [1] 인공 서열
-    //string ref         = load_reference("reference_synthetic.txt");
-    //vector<Read> reads = load_reads("reads_synthetic.txt");
-    //string original    = load_original("original_synthetic_1M.txt");
-
-    // [2] 빵효모 (반복서열 영향 확인)
-    //string ref         = load_reference("reference_yeast.txt");
-    //vector<Read> reads = load_reads("reads_yeast.txt");
-    //string original    = load_original("original_yeast_1M.txt");
-
-    // [3] Baseline (에러 없는 깨끗한 read)
-    //string ref         = load_reference("reference_synthetic.txt");
-    //vector<Read> reads = load_reads("reads_baseline.txt");
-    //string original    = load_original("original_synthetic_1M.txt");
-
-    // [4] InDel (삽입/결실 폭격 - DP 가 빛나는 환경)
-    string ref         = load_reference("reference_synthetic.txt");
-    vector<Read> reads = load_reads("reads_indel.txt");
-    string original    = load_original("original_synthetic_1M.txt");
-
-    // [5] End-Heavy (read 후반부에 에러 집중)
-    //string ref         = load_reference("reference_synthetic.txt");
-    //vector<Read> reads = load_reads("reads_end_heavy.txt");
-    //string original    = load_original("original_synthetic_1M.txt");
-
-    if (ref.empty() || reads.empty()) {
-        cout << "데이터 로딩 실패" << endl;
-        return 1;
-    }
-
-    // 2. Suffix Array 구축 (시간 측정 분리)
-    auto idx_start = chrono::high_resolution_clock::now();
-    vector<int> sa = buildSuffixArray(ref);
-    auto idx_end = chrono::high_resolution_clock::now();
-    double index_sec = chrono::duration<double>(idx_end - idx_start).count();
-
-    // 3. Read 매핑 (Search 시간 측정 분리)
-    int k = 15;
-    int max_mismatch = 2;
-
-    vector<int> positions(reads.size(), -1);
-    int mapped = 0;
-    int correct_position = 0; // 위치 정확도 계산용 변수
-
-    auto srch_start = chrono::high_resolution_clock::now();
-    for (int i = 0; i < (int)reads.size(); i++) {
-        positions[i] = mapRead(sa, ref, reads[i].sequence, k, max_mismatch);
-        if (positions[i] != -1) {
-            mapped++;
-            // 매핑된 위치가 정답 위치(start_pos)와 완벽히 일치하는지 체크
-            if (positions[i] == reads[i].start_pos) {
-                correct_position++;
-            }
-        }
-    }
-    auto srch_end = chrono::high_resolution_clock::now();
-    double search_sec = chrono::duration<double>(srch_end - srch_start).count();
-
-    double total_sec = index_sec + search_sec;
-
-    // 4. 서열 복원
-    string assembled = consensus(ref, reads, positions);
-
-    // 5. 정확도 측정
-    double accuracy = calcAccuracy(original, assembled);
-
-    // 6. 메모리 사용량 및 통계 계산
-    double sa_memory_mb = (double)(sa.size() * sizeof(int)) / (1024.0 * 1024.0);
-    double mapping_rate = reads.empty() ? 0.0 : ((double)mapped / reads.size() * 100.0);
-    double position_accuracy_pct = reads.empty() ? 0.0 : ((double)correct_position / reads.size() * 100.0);
-
-    // 7. 결과 출력 (콘솔)
-    cout.setf(ios::fixed);
-    cout << "\n=== 결과 ===" << endl;
-    cout << "총 수행 시간: " << total_sec << "초" << endl;
-    cout << "매핑된 read: " << mapped << " / " << reads.size() << endl;
-    cout << "매핑률: " << mapping_rate << "%" << endl;
-    cout << "복원 정확도: " << accuracy << "%" << endl;
-    cout << "SA 메모리 사용량: " << sa_memory_mb << " MB" << endl;
-
-    // 8. 복원된 염기서열 파일로 저장
-    ofstream fout("reconstructed_sequence_SA.fasta");
-    if (fout.is_open()) {
-        fout << ">reconstructed_sequence_SA_mapped\n";
-        for (size_t i = 0; i < assembled.size(); i += 80) {
-            fout << assembled.substr(i, 80) << "\n";
-        }
-        fout.close();
-    }
-
-    // 9. CSV 파일에 누적 저장 (Append Mode)
-    bool is_new_file = false;
-    ifstream check_file("results_sa_minimizer.csv");
-    if (!check_file.is_open()) {
-        is_new_file = true; // 파일이 없으면 새로 생성하며 헤더를 적기 위해 체크
-    } else {
-        check_file.close();
-    }
-
-    // ios::app 모드로 열면 기존 파일 내용을 지우지 않고 맨 아래에 이어 씁니다.
-    ofstream csv("results_sa_minimizer.csv", ios::app);
-    if (csv.is_open()) {
-        // 파일이 처음 만들어질 때만 첫 줄(헤더) 작성
-        if (is_new_file) {
-            csv << "algorithm,snp_rate,dataset,index_sec,search_sec,total_sec,memory_mb,mapped_pct,position_accuracy_pct,reconstruct_pct\n";
-        }
-        // 현재 실행된 결과 데이터를 한 줄 추가
-        csv << fixed << setprecision(2)
-            << current_algorithm << "," << current_snp << "," << current_dataset << ","
-            << index_sec << "," << search_sec << "," << total_sec << ","
-            << sa_memory_mb << "," << mapping_rate << ","
-            << position_accuracy_pct << "," << accuracy << "\n";
-        csv.close();
-        cout << "\n✅ 'results_sa_minimizer.csv' 파일에 결과가 성공적으로 기록되었습니다!" << endl;
-    } else {
-        cout << "\n❌ CSV 파일 저장 실패" << endl;
     }
 
     return 0;
