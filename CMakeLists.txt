@@ -1,49 +1,49 @@
-cmake_minimum_required(VERSION 4.0)
+cmake_minimum_required(VERSION 3.20)
 project(2026_algorithm_project)
 
 set(CMAKE_CXX_STANDARD 17)
 
-# 파이프라인: main -> reference_builder -> read_generator
+# ===== 데이터 생성 파이프라인 (역할1·2) =====
+# main 실행 시 reference + read 데이터 한 번에 생성
 add_executable(2026_algorithm_project
         main.cpp
         reference_builder.cpp
         read_generator.cpp)
 
-# RB-tree + DP 알고리즘
-add_executable(redblackTree_DP
-        redblackTree_DP.cpp)
+# 12개 trap read 데이터셋 생성기 (역할2)
+add_executable(trap_generator
+        trap_generator.cpp)
 
-# bruteforce 알고리즘
+# ===== 매칭 알고리즘들 =====
+# bruteforce (모든 알고리즘 비교의 벤치마크)
 add_executable(bruteforce
         bruteforce.cpp)
 
-# Hash Table + Greedy 알고리즘 (역할3, 이동건)
+# Hash Table + Greedy (역할3, 이동건)
 add_executable(hash_greedy
         hash_greedy.cpp)
 
-# Hash Table + DP 알고리즘 (역할3, 이동건) - 인델 환경 비교용
+# Hash Table + DP (역할3, 이동건) - 인델 환경 비교용
 add_executable(hash_dp
         hash_dp.cpp)
 
-# Windows 에서만 psapi 라이브러리 링크 (메모리 측정용)
+# RB-tree + DP (역할2)
+add_executable(redblackTree_DP
+        redblackTree_DP.cpp)
+
+# Suffix Array + Minimizer (역할3)
+add_executable(suffix_array
+        Suffix_Array_Minimizer.cpp)
+
+# BWT + Suffix Array (역할4)
+add_executable(bwt_mapper
+        bwt_mapper.cpp)
+
+# ===== Windows 전용: psapi 링크 (메모리 측정용) =====
 # macOS/Linux 는 POSIX getrusage 를 쓰므로 추가 라이브러리 불필요
 if(WIN32)
-    target_link_libraries(redblackTree_DP psapi)
     target_link_libraries(bruteforce      psapi)
     target_link_libraries(hash_greedy     psapi)
     target_link_libraries(hash_dp         psapi)
-endif()cmake_minimum_required(VERSION 4.2)
-project(2026_algorithm_project)
-
-set(CMAKE_CXX_STANDARD 20)
-
-# 파이프라인: main -> reference_builder -> read_generator
-add_executable(2026_algorithm_project
-        main.cpp
-        reference_builder.cpp
-        read_generator.cpp)
-
-add_executable(trap_generator trap_generator.cpp)
-
-# suffix array + minimizer 연동
-add_executable(suffix_array Suffix_Array_Minimizer.cpp)
+    target_link_libraries(redblackTree_DP psapi)
+endif()

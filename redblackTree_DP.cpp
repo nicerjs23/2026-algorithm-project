@@ -5,8 +5,14 @@
 #include <ctime>
 #include <map>
 #include <algorithm>
-#include <windows.h>
-#include <psapi.h>
+
+// ---- 플랫폼별 메모리 측정 / 콘솔 인코딩 분기 ----
+#ifdef _WIN32
+  #include <windows.h>
+  #include <psapi.h>
+#else
+  #include <sys/resource.h>
+#endif
 
 using namespace std;
 
@@ -32,11 +38,21 @@ struct Read {
     string seq;
 };
 
-// 메모리 측정 (실제 프로세스 메모리 - psapi)
+// 메모리 측정 (실제 프로세스 메모리)
 double check_memory() {
+#ifdef _WIN32
     PROCESS_MEMORY_COUNTERS pmc;
     GetProcessMemoryInfo(GetCurrentProcess(), &pmc, sizeof(pmc));
     return (double)pmc.WorkingSetSize / (1024.0 * 1024.0);
+#else
+    struct rusage ru;
+    getrusage(RUSAGE_SELF, &ru);
+  #ifdef __APPLE__
+    return (double)ru.ru_maxrss / (1024.0 * 1024.0);  // macOS: bytes
+  #else
+    return (double)ru.ru_maxrss / 1024.0;             // Linux: KB
+  #endif
+#endif
 }
 
 // 레퍼런스 및 원본 파일 읽기
@@ -112,7 +128,9 @@ int calculateDPScore(const string& read_seq, const string& ref_window) {
 //  메인 제어 흐름
 // ============================================================
 int main() {
-    SetConsoleOutputCP(65001);
+#ifdef _WIN32
+    SetConsoleOutputCP(65001);  // Windows 콘솔 UTF-8 (한글 깨짐 방지)
+#endif
 
     cout << "데이터 로딩 중...\n";
     string reference_genome = readReference("reference_synthetic.txt");
