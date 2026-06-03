@@ -1,25 +1,26 @@
 // =============================================================
 //  Short-read re-sequencing 프로젝트 - 역할3 (이동건)
-//  Hash Table + Greedy (Seed-and-Extend, 비둘기집 원리)
+//  Hash Table + DP (Seed-and-Extend, 비둘기집 원리, Needleman-Wunsch 점수)
 //
-//  [알고리즘 개요]
-//   1) Reference 를 k-mer (k = L/(D+1) = 10) 단위로 해시 인덱싱
-//      -> unordered_map<string, vector<int>> : k-mer -> 등장 위치 리스트
-//   2) 각 read 를 (D+1)=3 등분 -> 각 조각을 seed 로 hash 조회
-//      -> 비둘기집 원리: mismatch <= 2 이면 셋 중 하나는 perfect match
-//   3) 후보 위치마다 read 전체를 비교 (extend) 하여 mismatch 카운트
-//      -> mismatch 가 가장 작은 위치를 Greedy 하게 선택
+//  [Hash + Greedy 와의 차이]
+//   - Greedy 는 "글자 단위 일치 카운트" 만 함 -> InDel 못 잡음 (글자가 밀려서 mismatch 폭증)
+//   - DP   는 NW-style 점수로 후보를 평가 -> 삽입/결실 1~2 개까지 흡수 가능
+//   - 단, DP 는 후보당 O(L*window) 의 행렬 계산이 들어가서 Greedy 대비 명백히 느림
+//   -> 보고서 핵심 비교축: "인델 환경에서 Greedy 무너지고 DP 살아남음"
 //
-//  [bruteforce 와의 비교 포인트]
-//   - bruteforce: O(N * M * L) = ~3 * 10^12 연산
-//   - hash+greedy: O(N) 인덱스 구축 + read 당 평균 O(후보수 * L)
-//     -> 후보수가 평균 ~1개 가까이면 사실상 O(M * L)
+//  [RB-tree + DP (팀원2) 와의 차이]
+//   - 인덱스 자료구조만 다름: RB-tree(O(log n) 조회) vs Hash(O(1) 평균 조회)
+//   - DP 로직은 동일 -> 정확도는 거의 같고, 인덱스 시간/메모리만 차이
+//   -> 보고서 부가 비교축: 자료구조에 따른 인덱스 속도 차이
 //
-//  [측정 항목]
-//   - Index 구축 시간 / Search 시간 / 총 메모리
-//   - Mapping rate    : 매핑 성공 read / 전체 read
-//   - Position 정확도 : 정답 start_pos 와 일치한 read / 전체 read
-//   - 재구축 일치율    : reconstructed vs original 글자 일치율
+//  [DP 점수 체계]
+//   MATCH=+2, MISMATCH=-1, GAP=-2
+//   변이 1개당 손실: mismatch -3점 (+2 -> -1), indel -4점 (+2 -> -2)
+//   SCORE_THRESHOLD = READ_LEN*MATCH
+//                   + MAX_MISMATCH * (MISMATCH - MATCH)
+//                   + MAX_INDEL    * (GAP      - MATCH)
+//                   = 30*2 + 2*(-3) + 2*(-4) = 60 - 6 - 8 = 46
+//   -> "30bp 중 mismatch 2개 + indel 2개 동시 발생까지 통과" 라는 의미
 // =============================================================
 
 #include <iostream>
@@ -28,6 +29,7 @@
 #include <string>
 #include <unordered_map>
 #include <ctime>
+#include <algorithm>
 
 // ---- 플랫폼별 메모리 측정 / 콘솔 인코딩 분기 ----
 #ifdef _WIN32
@@ -40,12 +42,32 @@
 using namespace std;
 
 // ──────────────── 파라미터 ────────────────
-static const int SEED_LEN     = 10;  // k-mer 길이 (L=30, D=2 -> L/(D+1)=10)
-static const int MAX_MISMATCH = 2;   // 허용 mismatch 한계
+static const int K_MER        = 10;  // seed 길이 (L/(D+1) = 30/3)
+static const int READ_LEN     = 30;
+static const int MAX_MISMATCH = 2;   // 허용 mismatch (reference 측 SNP 대응)
+static const int MAX_INDEL    = 2;   // 허용 InDel    (read 측 시퀀서 오류 대응)
+
+// DP 점수 체계
+static const int SCORE_MATCH    =  2;
+static const int SCORE_MISMATCH = -1;
+static const int SCORE_GAP      = -2;
+
+// 통과 임계값: mismatch / indel 둘 다를 비용으로 반영
+//   완벽 정렬       = 30*MATCH                                = 60
+//   - mismatch 1개  = MATCH 잃고 MISMATCH 로     -> -(MATCH-MISMATCH) = -3
+//   - indel 1개     = MATCH 잃고 GAP 로          -> -(MATCH-GAP)      = -4
+// SCORE_THRESHOLD = 60 - 2*3 - 2*4 = 60 - 14 = 46
+//   "mismatch 2 개 + indel 2 개까지 통과" 라는 의미
+static const int SCORE_THRESHOLD = (READ_LEN * SCORE_MATCH)
+                                 + MAX_MISMATCH * (SCORE_MISMATCH - SCORE_MATCH)
+                                 + MAX_INDEL    * (SCORE_GAP      - SCORE_MATCH);
+
+// DP window 여유 (인델 발생 시 reference 측 길이 보정)
+static const int WINDOW_PADDING = 5;
 // ──────────────────────────────────────────
 
 struct Read {
-    int start_pos;   // 정답 위치 (reads.txt 에 기록된 0-based)
+    int start_pos;
     string seq;
 };
 
@@ -55,14 +77,11 @@ double check_memory() {
     GetProcessMemoryInfo(GetCurrentProcess(), &pmc, sizeof(pmc));
     return (double)pmc.WorkingSetSize / (1024.0 * 1024.0);
 #else
-    // POSIX (macOS / Linux): getrusage 로 최대 RSS 측정
     struct rusage ru;
     getrusage(RUSAGE_SELF, &ru);
   #ifdef __APPLE__
-    // macOS: ru_maxrss 는 바이트 단위
     return (double)ru.ru_maxrss / (1024.0 * 1024.0);
   #else
-    // Linux: ru_maxrss 는 킬로바이트 단위
     return (double)ru.ru_maxrss / 1024.0;
   #endif
 #endif
@@ -100,13 +119,10 @@ vector<Read> readReads(const string& filename) {
     return reads;
 }
 
-// Reference 에 대해 k-mer 해시 인덱스 구축
-// key   : 길이 k 의 substring
-// value : reference 내에서 해당 substring 이 시작되는 위치들
+// Reference 의 k-mer 해시 인덱스 (hash_greedy 와 동일 구조)
 unordered_map<string, vector<int>> buildHashIndex(const string& ref, int k) {
     unordered_map<string, vector<int>> index;
-    index.reserve(ref.size());  // 충돌 줄이기
-
+    index.reserve(ref.size());
     const int limit = (int)ref.size() - k;
     for (int i = 0; i <= limit; ++i) {
         index[ref.substr(i, k)].push_back(i);
@@ -114,57 +130,37 @@ unordered_map<string, vector<int>> buildHashIndex(const string& ref, int k) {
     return index;
 }
 
-// Hash + Greedy 로 read 의 매핑 위치 찾기
-// 반환: best 위치 (없으면 -1)
-int hashGreedySearch(
-    const string& ref,
-    const unordered_map<string, vector<int>>& index,
-    const string& read,
-    int k,
-    int max_mismatch)
-{
-    const int L = (int)read.size();
-    const int N = (int)ref.size();
+// Needleman-Wunsch 스타일 DP (1D 배열 메모리 최적화).
+// read 와 ref_window 정렬 점수의 최댓값을 반환한다.
+int calculateDPScore(const string& read_seq, const string& ref_window) {
+    const int n = (int)read_seq.size();
+    const int m = (int)ref_window.size();
 
-    int best_pos = -1;
-    int best_mm  = max_mismatch + 1;
+    vector<int> prev_row(m + 1, 0);
+    vector<int> curr_row(m + 1, 0);
 
-    // 비둘기집 원리: read 를 (D+1) 등분하여 각 조각을 seed 로 사용
-    // mismatch <= D 이면 셋 중 적어도 하나는 perfect match -> hash 조회로 잡힘
-    const int num_seeds = max_mismatch + 1;
-    for (int s = 0; s < num_seeds; ++s) {
-        const int seed_offset = s * k;
-        if (seed_offset + k > L) break;
+    for (int j = 1; j <= m; ++j) prev_row[j] = j * SCORE_GAP;
 
-        const string seed = read.substr(seed_offset, k);
-        auto it = index.find(seed);
-        if (it == index.end()) continue;
-
-        // 각 후보 위치에서 read 전체를 비교 (extend 단계)
-        for (int hit : it->second) {
-            const int cand = hit - seed_offset;
-            if (cand < 0 || cand + L > N) continue;
-
-            int mm = 0;
-            for (int j = 0; j < L; ++j) {
-                if (ref[cand + j] != read[j]) {
-                    if (++mm >= best_mm) break;  // 가지치기
-                }
-            }
-
-            if (mm < best_mm) {
-                best_mm  = mm;
-                best_pos = cand;
-                if (best_mm == 0) return best_pos;  // perfect -> 조기 종료 (greedy)
-            }
+    for (int i = 1; i <= n; ++i) {
+        curr_row[0] = i * SCORE_GAP;
+        for (int j = 1; j <= m; ++j) {
+            int diag = prev_row[j - 1]
+                     + (read_seq[i - 1] == ref_window[j - 1] ? SCORE_MATCH : SCORE_MISMATCH);
+            int up   = prev_row[j]     + SCORE_GAP;
+            int left = curr_row[j - 1] + SCORE_GAP;
+            curr_row[j] = max({diag, up, left});
         }
+        prev_row = curr_row;
     }
-    return best_pos;
+
+    int best = prev_row[0];
+    for (int j = 1; j <= m; ++j) best = max(best, prev_row[j]);
+    return best;
 }
 
 int main() {
 #ifdef _WIN32
-    SetConsoleOutputCP(65001);  // Windows 콘솔 UTF-8
+    SetConsoleOutputCP(65001);
 #endif
 
     // ────── 데이터셋 선택 (사용할 한 묶음만 주석 풀고 나머지는 닫기) ──────
@@ -183,7 +179,7 @@ int main() {
     //string reads_file     = "reads_baseline.txt";
     //string original_file  = "original_synthetic_1M.txt";
 
-    // [Trap] InDel (삽입/결실 폭격 - Greedy 의 약점 노출)
+    // [Trap] InDel (삽입/결실 폭격 - DP 가 빛나는 환경)
     //string reference_file = "reference_synthetic.txt";
     //string reads_file     = "reads_indel.txt";
     //string original_file  = "original_synthetic_1M.txt";
@@ -206,48 +202,71 @@ int main() {
         return 1;
     }
 
-    cout << "Hash Table + Greedy mapping...\n";
+    cout << "Hash Table + DP mapping...\n";
 
     // ──────────────── [1/2] 인덱스 구축 ────────────────
-    cout << "  [1/2] Hash index 구축 (k=" << SEED_LEN << ") ...\n";
-    clock_t t_index_start = clock();
-    auto index = buildHashIndex(reference_genome, SEED_LEN);
-    clock_t t_index_end = clock();
-    double index_time = (double)(t_index_end - t_index_start) / CLOCKS_PER_SEC;
-    cout << "        unique " << SEED_LEN << "-mer: " << index.size() << " 개\n";
+    cout << "  [1/2] Hash index 구축 (k=" << K_MER << ") ...\n";
+    clock_t t_idx_s = clock();
+    auto index = buildHashIndex(reference_genome, K_MER);
+    clock_t t_idx_e = clock();
+    double idx_time = (double)(t_idx_e - t_idx_s) / CLOCKS_PER_SEC;
+    cout << "        unique " << K_MER << "-mer: " << index.size() << " 개\n";
 
-    // 평균/최대 후보 수 (repeat 영향 측정 지표)
-    size_t bucket_max = 0, bucket_sum = 0;
+    size_t bucket_sum = 0, bucket_max = 0;
     for (auto& kv : index) {
         bucket_sum += kv.second.size();
         if (kv.second.size() > bucket_max) bucket_max = kv.second.size();
     }
     double bucket_avg = (double)bucket_sum / index.size();
 
-    // ──────────────── [2/2] read 매핑 ────────────────
-    cout << "  [2/2] read 매핑 중...\n";
-    clock_t t_search_start = clock();
+    // ──────────────── [2/2] read 매핑 (DP 점수 평가) ────────────────
+    cout << "  [2/2] read 매핑 중 (DP 점수 평가) ...\n";
+    clock_t t_srch_s = clock();
 
     const int N = (int)reference_genome.size();
     string reconstructed_seq(N, '-');
 
     int total            = (int)reads.size();
-    int mapped           = 0;  // 매핑 성공
-    int correct_position = 0;  // 정답 start_pos 와 일치
+    int mapped           = 0;
+    int correct_position = 0;
 
     const int progress_step = total / 10;
     for (int i = 0; i < total; ++i) {
-        int pos = hashGreedySearch(reference_genome, index, reads[i].seq,
-                                   SEED_LEN, MAX_MISMATCH);
+        int best_pos   = -1;
+        int best_score = SCORE_THRESHOLD - 1;  // 임계값 미만이면 매핑 실패
 
-        if (pos != -1) {
+        const int L = (int)reads[i].seq.size();
+
+        // 비둘기집 원리: read 를 (D+1)=3 등분, 각 조각을 seed 로 사용
+        for (int offset = 0; offset + K_MER <= L && offset <= MAX_MISMATCH * K_MER; offset += K_MER) {
+            const string seed = reads[i].seq.substr(offset, K_MER);
+            auto it = index.find(seed);
+            if (it == index.end()) continue;
+
+            for (int pos : it->second) {
+                const int ref_start = pos - offset;
+                if (ref_start < 0 || ref_start >= N) continue;
+
+                // 인델 흡수용 window: read 길이보다 약간 길게
+                const int window_len = min(READ_LEN + WINDOW_PADDING, N - ref_start);
+                const string ref_window = reference_genome.substr(ref_start, window_len);
+
+                const int score = calculateDPScore(reads[i].seq, ref_window);
+
+                if (score > best_score) {
+                    best_score = score;
+                    best_pos   = ref_start;
+                }
+            }
+        }
+
+        if (best_pos != -1) {
             ++mapped;
-            if (pos == reads[i].start_pos) ++correct_position;
+            if (best_pos == reads[i].start_pos) ++correct_position;
 
-            const int L = (int)reads[i].seq.size();
             for (int j = 0; j < L; ++j) {
-                if (pos + j < N)
-                    reconstructed_seq[pos + j] = reads[i].seq[j];
+                if (best_pos + j < N)
+                    reconstructed_seq[best_pos + j] = reads[i].seq[j];
             }
         }
 
@@ -257,8 +276,8 @@ int main() {
         }
     }
 
-    clock_t t_search_end = clock();
-    double search_time = (double)(t_search_end - t_search_start) / CLOCKS_PER_SEC;
+    clock_t t_srch_e = clock();
+    double srch_time = (double)(t_srch_e - t_srch_s) / CLOCKS_PER_SEC;
 
     // ──────────────── 재구축 일치율 ────────────────
     int mismatched = 0;
@@ -268,7 +287,7 @@ int main() {
     }
 
     double memory       = check_memory();
-    double total_time   = index_time + search_time;
+    double total_time   = idx_time + srch_time;
     double mapping_rate = 100.0 * mapped           / total;
     double pos_acc      = 100.0 * correct_position / total;
     double correct_rate = 100.0 * (N - mismatched) / N;
@@ -276,14 +295,14 @@ int main() {
     cout.setf(ios::fixed);
     cout.precision(2);
 
-    cout << "\n=========== Hash Table + Greedy 결과 ===========\n";
+    cout << "\n=========== Hash Table + DP 결과 ===========\n";
     cout << "[데이터셋]\n";
     cout << "  Reference : " << reference_file << "\n";
     cout << "  Reads     : " << reads_file     << "\n";
     cout << "[시간]\n";
-    cout << "  Index 구축 시간     : " << index_time   << " 초\n";
-    cout << "  Search 시간         : " << search_time  << " 초\n";
-    cout << "  총 실행 시간        : " << total_time   << " 초\n";
+    cout << "  Index 구축 시간     : " << idx_time   << " 초\n";
+    cout << "  Search (DP) 시간    : " << srch_time  << " 초\n";
+    cout << "  총 실행 시간        : " << total_time << " 초\n";
     cout << "[메모리]\n";
     cout << "  사용 중 메모리      : " << memory       << " MB\n";
     cout << "[인덱스 통계]\n";
@@ -296,19 +315,24 @@ int main() {
     cout << "  정답 위치 일치     : " << correct_position << " (" << pos_acc      << "%)\n";
     cout << "  재구축 일치율      : " << correct_rate     << "%\n";
     cout << "  불일치 글자 수     : " << mismatched       << " / " << N << "\n";
-    cout << "================================================\n";
+    cout << "[DP 설정]\n";
+    cout << "  점수: MATCH=+" << SCORE_MATCH << " MISMATCH=" << SCORE_MISMATCH
+         << " GAP=" << SCORE_GAP << "\n";
+    cout << "  SCORE_THRESHOLD    : " << SCORE_THRESHOLD
+         << " (mismatch " << MAX_MISMATCH << "개 + indel " << MAX_INDEL << "개 허용 기준)\n";
+    cout << "============================================\n";
 
     // 재구축된 염기서열 파일 저장
-    ofstream fout("reconstructed_hash_greedy.txt");
+    ofstream fout("reconstructed_hash_dp.txt");
     if (fout.is_open()) {
-        fout << ">reconstructed_sequence_hash_greedy\n";
+        fout << ">reconstructed_sequence_hash_dp\n";
         for (int i = 0; i < N; i += 60) {
             fout << reconstructed_seq.substr(i, 60) << "\n";
         }
         fout.close();
-        cout << "재구축 서열 저장 완료  : reconstructed_hash_greedy.txt\n";
+        cout << "재구축 서열 저장 완료  : reconstructed_hash_dp.txt\n";
     } else {
-        cerr << "Error: reconstructed_hash_greedy.txt 저장 실패\n";
+        cerr << "Error: reconstructed_hash_dp.txt 저장 실패\n";
     }
 
     return 0;
