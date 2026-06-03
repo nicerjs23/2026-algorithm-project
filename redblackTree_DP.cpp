@@ -5,14 +5,17 @@
 #include <ctime>
 #include <map>
 #include <algorithm>
-#include <windows.h>
-#include <psapi.h>
+
+// 메모리 측정
+#ifdef _WIN32
+  #include <windows.h>
+  #include <psapi.h>
+#else
+  #include <sys/resource.h>
+#endif
 
 using namespace std;
 
-// ============================================================
-//  상수 정의 및 환경 설정
-// ============================================================
 const int K_MER = 10;
 const int READ_LEN = 30;
 
@@ -21,22 +24,29 @@ const int SCORE_MATCH = 2;
 const int SCORE_MISMATCH = -1;
 const int SCORE_GAP = -2;
 
-// 오타를 최대 2개까지만 허용하는 논리적 최소 임계값 자동 계산
+// mismatch 임계값 계산
 const int SCORE_THRESHOLD = (READ_LEN * SCORE_MATCH) + 2 * (SCORE_MISMATCH - SCORE_MATCH);
 
-// ============================================================
-//  구조체
-// ============================================================
 struct Read {
     int start_pos;
     string seq;
 };
 
-// 메모리 측정 (실제 프로세스 메모리 - psapi)
+// 메모리 측정 (실제 프로세스 메모리)
 double check_memory() {
+#ifdef _WIN32
     PROCESS_MEMORY_COUNTERS pmc;
     GetProcessMemoryInfo(GetCurrentProcess(), &pmc, sizeof(pmc));
     return (double)pmc.WorkingSetSize / (1024.0 * 1024.0);
+#else
+    struct rusage ru;
+    getrusage(RUSAGE_SELF, &ru);
+  #ifdef __APPLE__
+    return (double)ru.ru_maxrss / (1024.0 * 1024.0);  // macOS: bytes
+  #else
+    return (double)ru.ru_maxrss / 1024.0;             // Linux: KB
+  #endif
+#endif
 }
 
 // 레퍼런스 및 원본 파일 읽기
@@ -54,7 +64,7 @@ vector<Read> readReads(const string& filename) {
     if (!input.is_open()) return reads;
     reads.reserve(100000);
     string line;
-    getline(input, line); // 헤더 스킵
+    getline(input, line);
     while (getline(input, line)) {
         size_t tab1 = line.find('\t');
         size_t tab2 = line.find('\t', tab1 + 1);
@@ -66,9 +76,7 @@ vector<Read> readReads(const string& filename) {
     return reads;
 }
 
-// ============================================================
-// [1단계] Red-Black Tree 기반 Seed 색인 구축
-// ============================================================
+// Red-Black Tree 기반 Seed-and-Extend
 map<string, vector<int>> buildSeedIndex(const string& reference, int k) {
     map<string, vector<int>> index;
     int N = (int)reference.length();
@@ -78,9 +86,7 @@ map<string, vector<int>> buildSeedIndex(const string& reference, int k) {
     return index;
 }
 
-// ============================================================
-// [2단계] 메모리 초고도화 최적화 (1D 배열 기반 DP 계산)
-// ============================================================
+// DP 계산
 int calculateDPScore(const string& read_seq, const string& ref_window) {
     int n = read_seq.length();
     int m = ref_window.length();
@@ -108,14 +114,13 @@ int calculateDPScore(const string& read_seq, const string& ref_window) {
     return best;
 }
 
-// ============================================================
-//  메인 제어 흐름
-// ============================================================
 int main() {
-    SetConsoleOutputCP(65001);
+#ifdef _WIN32
+    SetConsoleOutputCP(65001);  // Windows 콘솔 UTF-8 (한글 깨짐 방지)
+#endif
 
     cout << "데이터 로딩 중...\n";
-    
+
     // 인공서열
     string reference_genome = readReference("reference_synthetic.txt");
     vector<Read> reads      = readReads("reads_baseline.txt");
@@ -136,7 +141,7 @@ int main() {
     int N = reference_genome.length();
     string reconstructed_seq(N, '-');
 
-    cout << "Index 테이블 생성 중...\n";
+    cout << "Red-Black Tree 기반 Seed-and-Extend...\n";
     map<string, vector<int>> seed_index = buildSeedIndex(reference_genome, K_MER);
 
     cout << "Seed-and-Extend 매핑 시작...\n";
@@ -184,7 +189,6 @@ int main() {
         }
     }
 
-    // 최종 검증
     int mismatched = 0;
     for (int i = 0; i < N; ++i) {
         if (reconstructed_seq[i] != original_seq[i]) ++mismatched;
@@ -198,15 +202,13 @@ int main() {
     cout.setf(ios::fixed);
     cout.precision(2);
 
-    cout << "\n=========================================\n";
-    cout << "걸린 시간              : " << elapsed_sec         << " 초\n";
+    cout << "\n걸린 시간              : " << elapsed_sec         << " 초\n";
     cout << "사용 중인 메모리 크기   : " << memory              << " MB\n";
     cout << "총 원본 염기서열 길이(N): " << N                   << "\n";
     cout << "일치하지 않는 글자 수   : " << mismatched          << " 개 (미복구 빈칸 포함)\n";
     cout << "재구축 일치율(정확도)   : " << reconstruction_rate << "%\n";
-    cout << "=========================================\n";
 
-    // 재구축된 염기서열 파일 저장 (FASTA 형식, 60bp마다 줄바꿈)
+    // 재구축된 염기서열 파일 저장
     ofstream fout("reconstructed_seq.txt");
     if (fout.is_open()) {
         fout << ">reconstructed_sequence\n";
