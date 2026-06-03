@@ -23,7 +23,7 @@ bool build_reference(double snp_rate);
 bool generate_reads();
 
 // ---------------- 파라미터 ----------------
-static const double SNP_RATE = 0.05;  // SNP 비율: 0.001 = 0.1%
+static const double SNP_RATE = 0.001;  // SNP 비율: 0.001 = 0.1%
 // -----------------------------------------
 
 int main() {
