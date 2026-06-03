@@ -1,0 +1,45 @@
+# ===== CLion / CMake 빌드 산출물 =====
+cmake-build-*/
+build/
+out/
+
+# 루트에서 직접 빌드할 경우 생기는 CMake 산출물
+CMakeCache.txt
+CMakeFiles/
+cmake_install.cmake
+Makefile
+
+# ===== 컴파일 결과물 =====
+*.o
+*.obj
+*.exe
+*.out
+*.app
+*.dSYM/
+a.out
+
+# ===== IDE 설정 (각자 환경 다르므로 통째 무시) =====
+.idea/
+*.iml
+.vscode/
+
+# ===== OS 시스템 파일 =====
+.DS_Store
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+
+# ===== 로그/임시 =====
+*.log
+*.tmp
+
+# ===== 입력 데이터 (용량 크므로 git 제외, 직접 다운) =====
+*.fasta
+
+# ===== 생성 데이터 파일 (실행 시 자동 생성, 단수형/복수형 모두 포함) =====
+original*.txt
+reference*.txt
+snp_list*.txt
+reads*.txt
+result*.txt
+reconstructed*.txt
