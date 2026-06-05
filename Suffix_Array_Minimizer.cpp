@@ -202,7 +202,7 @@ string consensus(const string& ref,
         }
     }
 
-    string result(N, 'N');
+    string result(N, '-');
     for (int i = 0; i < N; i++) {
         int maxVote = 0, maxIdx = 0;
         for (int j = 0; j < 4; j++) {
@@ -216,23 +216,53 @@ string consensus(const string& ref,
     return result;
 }
 
-// ── 정확도 측정 ──
-double calcAccuracy(const string& original, const string& assembled) {
-    int match = 0;
-    int n = min(original.size(), assembled.size());
-
-    for (int i = 0; i < n; i++) {
-        if (assembled[i] != 'N' && original[i] == assembled[i]) {
-            match++;
-        }
-    }
-
-    return (double)match / original.size() * 100.0;
+double check_memory() {
+#ifdef _WIN32
+    PROCESS_MEMORY_COUNTERS pmc;
+    GetProcessMemoryInfo(GetCurrentProcess(), &pmc, sizeof(pmc));
+    return (double)pmc.WorkingSetSize / (1024.0 * 1024.0);
+#else
+    struct rusage ru;
+    getrusage(RUSAGE_SELF, &ru);
+#ifdef __APPLE__
+    return (double)ru.ru_maxrss / (1024.0 * 1024.0);
+#else
+    return (double)ru.ru_maxrss / 1024.0;
+#endif
+#endif
 }
 
+// ── 정확도 측정 ──
+double calcAccuracy(const string& original, const string& assembled) {
+    int match = 0, total = 0;
+    for (int i = 0; i < (int)original.size(); i++) {
+        if (assembled[i] != 'N') {  // N을 '-'로 바꾸기
+            total++;
+            if (original[i] == assembled[i]) match++;
+        }
+    }
+    // 매핑 안된 위치도 포함해서 계산
+    int mismatched = 0;
+    for (int i = 0; i < (int)original.size(); i++) {
+        if (assembled[i] != original[i]) mismatched++;
+    }
+    return 100.0 * (original.size() - mismatched) / original.size();
+}
 // ── main ──
 int main() {
-    auto startTime = chrono::high_resolution_clock::now();
+#ifdef _WIN32
+    SetConsoleOutputCP(65001);  // Windows 콘솔 UTF-8
+#endif
+
+    // =========================================================================
+    // [사용자 설정 파트]
+    // =========================================================================
+    string current_algorithm = "sa_minimizer";
+    string current_snp       = "0.1%";       // 예: 0.1%, 1.0%, 2.0%, 5.0%
+    string current_dataset   = "baseline";   // 예: yeast, baseline, indel, end_heavy
+    // =========================================================================
+
+    cout << "데이터 로딩 중...\n";
 
     // 1. 파일 읽기
     // [1] Baseline (에러 없는 깨끗한 read) - 인공 서열
@@ -259,6 +289,10 @@ int main() {
         cout << "데이터 로딩 실패" << endl;
         return 1;
     }
+    cout << "SA_Minimizer mapping...\n";
+
+    // ── 알고리즘 순수 성능 시간 측정 시작 ──
+    clock_t start_time = clock();
 
     // 2. Suffix Array 구축
     vector<int> sa = buildSuffixArray(ref);
@@ -266,7 +300,6 @@ int main() {
     // 3. Read 매핑
     int k = 15;
     int max_mismatch = 2;
-
     vector<int> positions(reads.size(), -1);
     int mapped = 0;
 
@@ -276,41 +309,72 @@ int main() {
     }
 
     // 4. 서열 복원
-    string assembled = consensus(ref, reads, positions);
+    string reconstructed_seq = consensus(ref, reads, positions);
 
-    // 5. 정확도 측정
-    double accuracy = calcAccuracy(original, assembled);
+    // 5. 정확도 측정 (팀원 코드와 100% 동일한 로직 적용)
+    int N = (int)ref.length();
+    int mismatched = 0;
+    for (int i = 0; i < N; ++i) {
+        if (reconstructed_seq[i] != original[i]) {
+            ++mismatched;
+        }
+    }
+
+    clock_t end_time = clock();
 
     // 6. 시간 측정
     auto endTime = chrono::high_resolution_clock::now();
-    double elapsed = chrono::duration<double>(endTime - startTime).count();
 
-    // 7. 메모리 사용량 측정
-    double sa_memory_mb = (double)(sa.size() * sizeof(int)) / (1024.0 * 1024.0);
+    // 계산
+    double elapsed_sec = (double)(end_time - start_time) / CLOCKS_PER_SEC;
+    double sa_memory_mb = check_memory();
+    double correct_rate = 100.0 * (N - mismatched) / N;
+    double mapping_rate = reads.empty() ? 0.0 : ((double)mapped / reads.size() * 100.0);
 
     // 8. 결과 출력
     cout.setf(ios::fixed);
+    cout.precision(2);
 
     cout << "\n=== 결과 ===" << endl;
-    cout << "총 수행 시간: " << elapsed << "초" << endl;
+    cout << "총 수행 시간: " << elapsed_sec << " 초\n";
     cout << "매핑된 read: " << mapped << " / " << reads.size() << endl;
+    cout << "매핑률: " << mapping_rate << "%\n";
+    cout << "복원 정확도: " << correct_rate << "%\n";
+    cout << "SA 메모리 사용량: " << sa_memory_mb << " MB\n";
 
-    // reads.size()가 0일 때의 예외 처리 추가
-    double mapping_rate = reads.empty() ? 0.0 : ((double)mapped / reads.size() * 100.0);
-    cout << "매핑률: " << mapping_rate << "%" << endl;
-
-    cout << "복원 정확도: " << accuracy << "%" << endl;
-    cout << "SA 메모리 사용량: " << sa_memory_mb << " MB" << endl;
-
-    // 8. 복원된 염기서열 파일로 저장 (FASTA 포맷)
+    // 9. 복원된 염기서열 파일로 저장
     ofstream fout("reconstructed_sequence_SA.fasta");
     if (fout.is_open()) {
         fout << ">reconstructed_sequence_SA_mapped\n";
-
-        for (size_t i = 0; i < assembled.size(); i += 80) {
-            fout << assembled.substr(i, 80) << "\n";
+        for (int i = 0; i < N; i += 60) {
+            fout << reconstructed_seq.substr(i, 60) << "\n";
         }
         fout.close();
+        cout << "재구축 서열 저장 완료  : reconstructed_sequence_SA.fasta\n";
+    }
+
+    // 10. CSV 파일에 누적 저장
+    bool is_new_file = false;
+    ifstream check_file("results_sa_minimizer.csv");
+    if (!check_file.is_open()) {
+        is_new_file = true;
+    } else {
+        check_file.close();
+    }
+
+    ofstream csv("results_sa_minimizer.csv", ios::app);
+    if (csv.is_open()) {
+        if (is_new_file) {
+            csv << "algorithm,dataset,snp_rate,total_sec,memory_mb,mapped_pct,reconstruct_pct\n";
+        }
+        csv << fixed << setprecision(2)
+            << current_algorithm << "," << current_dataset << "," << current_snp << ","
+            << elapsed_sec << "," << sa_memory_mb << "," << mapping_rate << ","
+            << correct_rate << "\n";
+        csv.close();
+        cout << "\n✅ 핵심 데이터가 'results_sa_minimizer.csv' 파일에 성공적으로 기록되었습니다!\n";
+    } else {
+        cout << "\n❌ CSV 파일 저장 실패\n";
     }
 
     return 0;

@@ -100,6 +100,16 @@ int main() {
 #ifdef _WIN32
     SetConsoleOutputCP(65001);  // Windows 콘솔 UTF-8
 #endif
+
+    // =========================================================================
+    // [사용자 설정 파트]
+    // 코드를 실행하기 전에 현재 돌리는 데이터셋의 정보를 여기에 적어주세요!
+    // =========================================================================
+    string current_algorithm = "brute_force";
+    string current_snp       = "0.1%";       // 예: 0.1%, 1.0%, 2.0%, 5.0%
+    string current_dataset   = "baseline";   // 예: yeast, baseline, indel, end_heavy
+    // =========================================================================
+
     cout << "데이터 로딩 중...\n";
 
     // 인공서열
@@ -162,10 +172,15 @@ int main() {
     cout.setf(ios::fixed);
     cout.precision(2);
 
+    // 매핑률 따로 계산
+    double mapping_rate = result.total == 0 ? 0.0 :
+        ((double)result.mapped / result.total * 100.0);
+
     cout << "\n걸린 시간              : " << elapsed_sec  << " 초\n";
     cout << "사용 중인 메모리 크기   : " << memory       << " MB\n";
     cout << "총 원본 염기서열 길이   : " << N            << "\n";
     cout << "일치하지 않는 글자 수   : " << mismatched   << "\n";
+    cout << "매핑률                 : " << mapping_rate << "%\n";
     cout << "재구축 일치율           : " << correct_rate << "%\n";
 
     // 재구축된 염기서열 파일 저장
@@ -179,6 +194,31 @@ int main() {
         cout << "재구축 서열 저장 완료  : reconstructedbf_seq.txt\n";
     } else {
         cerr << "Error: reconstructedbf_seq.txt 저장 실패\n";
+    }
+
+    bool is_new_file = false;
+    ifstream check_file("results_bruteforce.csv");
+    if (!check_file.is_open()) {
+        is_new_file = true; // 파일이 없으면 새로 생성
+    } else {
+        check_file.close();
+    }
+
+    ofstream csv("results_bruteforce.csv", ios::app);
+    if (csv.is_open()) {
+        // 첫 줄(헤더) 작성
+        if (is_new_file) {
+            csv << "algorithm,dataset,snp_rate,total_sec,memory_mb,mapped_pct,reconstruct_pct\n";
+        }
+        // 결과 데이터 한 줄 추가
+        csv << fixed << setprecision(2)
+            << current_algorithm << "," << current_dataset << "," << current_snp << ","
+            << elapsed_sec << "," << memory << "," << mapping_rate << ","
+            << correct_rate << "\n";
+        csv.close();
+        cout << "\n✅ 핵심 데이터가 'results_bruteforce.csv' 파일에 성공적으로 기록되었습니다!\n";
+    } else {
+        cout << "\n❌ CSV 파일 저장 실패\n";
     }
 
     return 0;
