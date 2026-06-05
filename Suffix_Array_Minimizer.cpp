@@ -6,6 +6,7 @@
 #include <chrono>
 #include <sys/time.h>
 #include <sys/resource.h>
+#include <iomanip>
 
 using namespace std;
 
@@ -232,22 +233,6 @@ double check_memory() {
 #endif
 }
 
-// ── 정확도 측정 ──
-double calcAccuracy(const string& original, const string& assembled) {
-    int match = 0, total = 0;
-    for (int i = 0; i < (int)original.size(); i++) {
-        if (assembled[i] != 'N') {  // N을 '-'로 바꾸기
-            total++;
-            if (original[i] == assembled[i]) match++;
-        }
-    }
-    // 매핑 안된 위치도 포함해서 계산
-    int mismatched = 0;
-    for (int i = 0; i < (int)original.size(); i++) {
-        if (assembled[i] != original[i]) mismatched++;
-    }
-    return 100.0 * (original.size() - mismatched) / original.size();
-}
 // ── main ──
 int main() {
 #ifdef _WIN32
@@ -258,7 +243,7 @@ int main() {
     // [사용자 설정 파트]
     // =========================================================================
     string current_algorithm = "sa_minimizer";
-    string current_snp       = "0.1%";       // 예: 0.1%, 1.0%, 2.0%, 5.0%
+    string current_snp       = "1.0%";       // 예: 0.1%, 1.0%, 2.0%, 5.0%
     string current_dataset   = "baseline";   // 예: yeast, baseline, indel, end_heavy
     // =========================================================================
 
@@ -321,9 +306,6 @@ int main() {
     }
 
     clock_t end_time = clock();
-
-    // 6. 시간 측정
-    auto endTime = chrono::high_resolution_clock::now();
 
     // 계산
     double elapsed_sec = (double)(end_time - start_time) / CLOCKS_PER_SEC;

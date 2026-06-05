@@ -28,10 +28,7 @@
 #include <random>
 
 // ──────────────── 파라미터 ────────────────
-static const std::string IN_SYNTH_ORIGINAL  = "original_synthetic_1M.txt";
 static const std::string IN_YEAST_ORIGINAL  = "original_yeast_1M.txt";
-
-static const std::string OUT_SYNTH_READS    = "reads_synthetic.txt";
 static const std::string OUT_YEAST_READS    = "reads_yeast.txt";
 
 static const int      READ_LENGTH = 30;      // read 길이 (bp) - 팀 공통 L=30
@@ -83,21 +80,13 @@ static bool generateOne(const std::string &in_original,
 }
 
 bool generate_reads() {
-    // ========== A. 인공 서열 read (항상 생성) ==========
-    std::cout << "[A] 인공 서열 read 생성\n";
-    if (!generateOne(IN_SYNTH_ORIGINAL, OUT_SYNTH_READS, "synthetic")) {
-        std::cerr << "[오류] 인공 서열 read 생성 실패. "
-                  << IN_SYNTH_ORIGINAL << " 가 같은 폴더에 있는지 확인하세요.\n";
-        return false;
-    }
-
-    // ========== B. 빵효모 read (원본 파일 있을 때만) ==========
+    // ========== 빵효모 read (원본 파일 있을 때만) ==========
     {
         std::ifstream test(IN_YEAST_ORIGINAL);
         if (test.is_open()) {
             test.close();
             std::cout << "\n[B] " << IN_YEAST_ORIGINAL
-                      << " 발견 -> 빵효모 read 도 함께 생성\n";
+                      << " 발견 -> 빵효모 read 생성\n";
             if (!generateOne(IN_YEAST_ORIGINAL, OUT_YEAST_READS, "yeast")) {
                 return false;
             }
@@ -107,8 +96,6 @@ bool generate_reads() {
         }
     }
 
-    std::cout << "\n[완료] read 생성 단계 종료.\n"
-              << "       알고리즘 팀은 reads_synthetic.txt 를 기본 입력으로,\n"
-              << "       비교 실험 시 reads_yeast.txt 도 함께 사용하세요.\n";
+    std::cout << "\n[완료] read 생성 단계 종료.\n";
     return true;
 }
