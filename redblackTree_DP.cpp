@@ -16,24 +16,24 @@
 
 using namespace std;
 
-const int K_MER = 10;
-const int READ_LEN = 30;
+const int k = 10;
+const int readLen = 30;
 
 // DP 점수 체계
-const int SCORE_MATCH = 2;
-const int SCORE_MISMATCH = -1;
-const int SCORE_GAP = -2;
+const int dpMatch = 2;
+const int dpMismatch = -1;
+const int dpIndel = -2;
 
 // mismatch 임계값 계산
-const int SCORE_THRESHOLD = (READ_LEN * SCORE_MATCH) + 2 * (SCORE_MISMATCH - SCORE_MATCH);
+const int isMatch = (readLen * dpMatch) + 2 * (dpMismatch - dpMatch);
 
 struct Read {
-    int start_pos;
+    int pos;
     string seq;
 };
 
 // 메모리 측정 (실제 프로세스 메모리)
-double check_memory() {
+double checkMemory() {
 #ifdef _WIN32
     PROCESS_MEMORY_COUNTERS pmc;
     GetProcessMemoryInfo(GetCurrentProcess(), &pmc, sizeof(pmc));
@@ -53,63 +53,75 @@ double check_memory() {
 string readReference(const string& filename) {
     ifstream input(filename);
     string content;
-    if (input.is_open()) getline(input, content);
+
+    if (input.is_open()) {
+        getline(input, content);
+    }
+
     return content;
 }
 
-// Reads 파일 읽기 (탭 구분자 파싱)
+// Reads 파일 읽기
 vector<Read> readReads(const string& filename) {
     ifstream input(filename);
     vector<Read> reads;
-    if (!input.is_open()) return reads;
+
+    if (!input.is_open()) {
+        return reads;
+    }
+
     reads.reserve(100000);
     string line;
     getline(input, line);
+
     while (getline(input, line)) {
-        size_t tab1 = line.find('\t');
-        size_t tab2 = line.find('\t', tab1 + 1);
+        size_t t1 = line.find('\t');
+        size_t t2 = line.find('\t', t1 + 1);
         Read r;
-        r.start_pos = stoi(line.substr(tab1 + 1, tab2 - tab1 - 1));
-        r.seq = line.substr(tab2 + 1);
+        r.pos = stoi(line.substr(t1 + 1, t2 - t1 - 1));
+        r.seq = line.substr(t2 + 1);
         reads.push_back(r);
     }
+
     return reads;
 }
 
-// Red-Black Tree 기반 Seed-and-Extend
-map<string, vector<int>> buildSeedIndex(const string& reference, int k) {
-    map<string, vector<int>> index;
+// Red-Black Tree 기반 Seed-and-Extend 구성
+map<string, vector<int>> consSeedIdx(const string& reference, int k) {
+    map<string, vector<int>> idx;
     int N = (int)reference.length();
     for (int i = 0; i <= N - k; ++i) {
-        index[reference.substr(i, k)].push_back(i);
+        idx[reference.substr(i, k)].push_back(i);
     }
-    return index;
+    return idx;
 }
 
 // DP 계산
-int calculateDPScore(const string& read_seq, const string& ref_window) {
-    int n = read_seq.length();
-    int m = ref_window.length();
+int calculateDPScore(const string& readSeq, const string& refCandidate) {
+    int n = readSeq.length();
+    int m = refCandidate.length();
 
-    vector<int> prev_row(m + 1, 0);
-    vector<int> curr_row(m + 1, 0);
+    vector<int> prevRow(m + 1, 0);
+    vector<int> curRow(m + 1, 0);
 
-    for (int j = 1; j <= m; j++) prev_row[j] = j * SCORE_GAP;
-
-    for (int i = 1; i <= n; i++) {
-        curr_row[0] = i * SCORE_GAP;
-        for (int j = 1; j <= m; j++) {
-            int scoreDiag = prev_row[j - 1] + (read_seq[i - 1] == ref_window[j - 1] ? SCORE_MATCH : SCORE_MISMATCH);
-            int scoreUp = prev_row[j] + SCORE_GAP;
-            int scoreLeft = curr_row[j - 1] + SCORE_GAP;
-            curr_row[j] = max({scoreDiag, scoreUp, scoreLeft});
-        }
-        prev_row = curr_row;
+    for (int j = 1; j <= m; j++) {
+        prevRow[j] = j * dpIndel;
     }
 
-    int best = prev_row[0];
+    for (int i = 1; i <= n; i++) {
+        curRow[0] = i * dpIndel;
+        for (int j = 1; j <= m; j++) {
+            int scoreDiag = prevRow[j - 1] + (readSeq[i - 1] == refCandidate[j - 1] ? dpMatch : dpMismatch); // snp인 경우만 고려
+            int scoreUp = prevRow[j] + dpIndel; // 결실 발생
+            int scoreLeft = curRow[j - 1] + dpIndel; // 삽입 발생
+            curRow[j] = max({scoreDiag, scoreUp, scoreLeft}); // 세 가지 중 점수가 가장 높은 경우 선택
+        }
+        prevRow = curRow;
+    }
+
+    int best = prevRow[0];
     for (int j = 1; j <= m; j++) {
-        best = max(best, prev_row[j]);
+        best = max(best, prevRow[j]);
     }
     return best;
 }
@@ -123,9 +135,9 @@ int main() {
 
     // 인공서열
     string reference_genome = readReference("reference_synthetic.txt");
-    vector<Read> reads      = readReads("reads_baseline.txt");
-    // vector<Read> reads = readReads("reads_indel.txt");
-    // vector<Read> reads = readReads("reads_end_heavy.txt");
+    //vector<Read> reads      = readReads("reads_baseline.txt");
+    //vector<Read> reads = readReads("reads_indel.txt");
+    vector<Read> reads = readReads("reads_end_heavy.txt");
     string original_seq     = readReference("original_synthetic_1M.txt");
 
     // 효모
@@ -139,51 +151,51 @@ int main() {
     }
 
     int N = reference_genome.length();
-    string reconstructed_seq(N, '-');
+    string reconstructed(N, '-');
 
-    cout << "Red-Black Tree 기반 Seed-and-Extend...\n";
-    map<string, vector<int>> seed_index = buildSeedIndex(reference_genome, K_MER);
+    cout << "Red-Black Tree Seed-and-Extend...\n";
+    map<string, vector<int>> seedIdx = consSeedIdx(reference_genome, k);
 
-    cout << "Seed-and-Extend 매핑 시작...\n";
-    clock_t start_time = clock();
+    cout << "Seed-and-Extend 매핑...\n";
+    clock_t sTime = clock();
 
-    int mapped_count = 0;
-    int correct_mapping_count = 0;
+    int mappingCount = 0;
+    int exactCount = 0;
 
     for (size_t i = 0; i < reads.size(); ++i) {
-        int best_pos = -1;
-        int best_score = SCORE_THRESHOLD - 1;
+        int bestPos = -1;
+        int bestScore = isMatch;
 
         for (int offset = 0; offset <= 20; offset += 10) {
-            string seed = reads[i].seq.substr(offset, K_MER);
-            auto it = seed_index.find(seed);
+            string seed = reads[i].seq.substr(offset, k);
+            auto it = seedIdx.find(seed); // RB-tree에서 mismatch가 없는 구간 찾기 (find)
 
-            if (it != seed_index.end()) {
+            if (it != seedIdx.end()) {
                 for (int pos : it->second) {
-                    int ref_start = pos - offset;
-                    if (ref_start < 0 || ref_start >= N) continue;
+                    int refStart = pos - offset;
+                    if (refStart < 0 || refStart >= N) continue;
 
-                    int window_len = min(READ_LEN + 5, N - ref_start);
-                    string ref_window = reference_genome.substr(ref_start, window_len);
+                    int candidateLen = min(readLen + 2, N - refStart);
+                    string refCandidate = reference_genome.substr(refStart, candidateLen);
 
-                    int score = calculateDPScore(reads[i].seq, ref_window);
+                    int score = calculateDPScore(reads[i].seq, refCandidate);
 
-                    if (score > best_score) {
-                        best_score = score;
-                        best_pos = ref_start;
+                    if (score >= bestScore) {
+                        bestScore = score;
+                        bestPos = refStart;
                     }
                 }
             }
         }
 
-        if (best_pos != -1) {
-            mapped_count++;
-            if (best_pos == reads[i].start_pos) {
-                correct_mapping_count++;
+        if (bestPos != -1) {
+            mappingCount++;
+            if (bestPos == reads[i].pos) {
+                exactCount++;
             }
-            for (int j = 0; j < READ_LEN; ++j) {
-                if (best_pos + j < N) {
-                    reconstructed_seq[best_pos + j] = reads[i].seq[j];
+            for (int j = 0; j < readLen; ++j) {
+                if (bestPos + j < N) {
+                    reconstructed[bestPos + j] = reads[i].seq[j];
                 }
             }
         }
@@ -191,12 +203,14 @@ int main() {
 
     int mismatched = 0;
     for (int i = 0; i < N; ++i) {
-        if (reconstructed_seq[i] != original_seq[i]) ++mismatched;
+        if (reconstructed[i] != original_seq[i]) {
+            ++mismatched;
+        }
     }
 
     clock_t end_time = clock();
-    double elapsed_sec       = (double)(end_time - start_time) / CLOCKS_PER_SEC;
-    double memory            = check_memory();  // 실제 프로세스 메모리
+    double elapsed_sec = (double)(end_time - sTime) / CLOCKS_PER_SEC;
+    double memory = checkMemory();  // 실제 프로세스 메모리
     double reconstruction_rate = 100.0 * (N - mismatched) / N;
 
     cout.setf(ios::fixed);
@@ -213,7 +227,7 @@ int main() {
     if (fout.is_open()) {
         fout << ">reconstructed_sequence\n";
         for (int i = 0; i < N; i += 60) {
-            fout << reconstructed_seq.substr(i, 60) << "\n";
+            fout << reconstructed.substr(i, 60) << "\n";
         }
         fout.close();
         cout << "재구축 서열 저장 완료  : reconstructed_seq.txt\n";
