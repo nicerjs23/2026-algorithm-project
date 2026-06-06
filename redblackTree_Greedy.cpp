@@ -103,14 +103,6 @@ int main() {
     SetConsoleOutputCP(65001);  // Windows 콘솔 UTF-8 (한글 깨짐 방지)
 #endif
 
-    // =========================================================================
-    // [사용자 설정 파트] 실행 전에 현재 돌리는 데이터셋 정보 입력
-    // =========================================================================
-    string current_algorithm = "redblackTree_Greedy";
-    string current_snp       = "1.0%";       // 예: 0.1%, 1.0%, 2.0%, 5.0%
-    string current_dataset   = "yeast";      // 예: yeast, baseline, indel, end_heavy
-    // =========================================================================
-
     cout << "데이터 로딩 중...\n";
 
     // 인공서열
@@ -218,33 +210,6 @@ int main() {
     } else {
         cerr << "Error: reconstructed_greedy_seq.txt 저장 실패\n";
     }
-
-    // =========================================================================
-    // [CSV 저장 파트] 결과 수집 후 아래 블록 전체 삭제 예정
-    // =========================================================================
-    bool is_new_file = false;
-    ifstream check_file("results_redblackTree_Greedy.csv");
-    if (!check_file.is_open()) {
-        is_new_file = true;
-    } else {
-        check_file.close();
-    }
-
-    ofstream csv("results_redblackTree_Greedy.csv", ios::app);
-    if (csv.is_open()) {
-        if (is_new_file) {
-            csv << "algorithm,dataset,snp_rate,total_sec,memory_mb,mapped_pct,reconstruct_pct\n";
-        }
-        csv << fixed << setprecision(2)
-            << current_algorithm << "," << current_dataset << "," << current_snp << ","
-            << elapsed_sec << "," << memory << "," << mapping_rate << ","
-            << reconstruction_rate << "\n";
-        csv.close();
-        cout << "\n결과가 'results_redblackTree_Greedy.csv' 에 기록되었습니다!\n";
-    } else {
-        cout << "\nCSV 파일 저장 실패\n";
-    }
-    // =========================================================================
 
     return 0;
 }

@@ -5,6 +5,7 @@
 #include <ctime>
 #include <map>
 #include <algorithm>
+#include <iomanip>  // CSV 출력용
 
 // 메모리 측정
 #ifdef _WIN32
@@ -25,7 +26,7 @@ const int dpMismatch = -1;
 const int dpIndel = -2;
 
 // mismatch 임계값 계산
-const int isMatch = (readLen * dpMatch) + 2 * (dpMismatch - dpMatch);
+const int isMatch = (readLen * dpMatch) + 2 * (dpMismatch - dpMatch) + 2 * (dpIndel - dpMatch);
 
 struct Read {
     int pos;
@@ -134,16 +135,22 @@ int main() {
     cout << "데이터 로딩 중...\n";
 
     // 인공서열
-    string reference_genome = readReference("reference_synthetic.txt");
+    //string reference_genome = readReference("reference_synthetic.txt");
     //vector<Read> reads      = readReads("reads_baseline.txt");
+    //string original_seq     = readReference("original_synthetic_1M.txt");
+
+    //string reference_genome = readReference("reference_synthetic.txt");
     //vector<Read> reads = readReads("reads_indel.txt");
-    vector<Read> reads = readReads("reads_end_heavy.txt");
-    string original_seq     = readReference("original_synthetic_1M.txt");
+    //string original_seq     = readReference("original_synthetic_1M.txt");
+
+    //string reference_genome = readReference("reference_synthetic.txt");
+    //vector<Read> reads = readReads("reads_end_heavy.txt");
+    //string original_seq     = readReference("original_synthetic_1M.txt");
 
     // 효모
-    //string reference_genome = readReference("reference_yeast.txt");
-    //vector<Read> reads      = readReads("reads_yeast.txt");
-    //string original_seq     = readReference("original_yeast_1M.txt");
+    string reference_genome = readReference("reference_yeast.txt");
+    vector<Read> reads      = readReads("reads_yeast.txt");
+    string original_seq     = readReference("original_yeast_1M.txt");
 
     if (reference_genome.empty() || reads.empty() || original_seq.empty()) {
         cerr << "Error: 데이터 로딩 실패\n";
@@ -168,7 +175,7 @@ int main() {
 
         for (int offset = 0; offset <= 20; offset += 10) {
             string seed = reads[i].seq.substr(offset, k);
-            auto it = seedIdx.find(seed); // RB-tree에서 mismatch가 없는 구간 찾기 (find)
+            auto it = seedIdx.find(seed); // RB-tree에서 mismatch가 없는 구간 찾기
 
             if (it != seedIdx.end()) {
                 for (int pos : it->second) {
@@ -212,6 +219,7 @@ int main() {
     double elapsed_sec = (double)(end_time - sTime) / CLOCKS_PER_SEC;
     double memory = checkMemory();  // 실제 프로세스 메모리
     double reconstruction_rate = 100.0 * (N - mismatched) / N;
+    double mapping_rate = reads.empty() ? 0.0 : ((double)mappingCount / reads.size() * 100.0);
 
     cout.setf(ios::fixed);
     cout.precision(2);
