@@ -14,6 +14,10 @@ add_executable(2026_algorithm_project
 add_executable(trap_generator
         trap_generator.cpp)
 
+# SNP 비율별 데이터셋 일괄 생성기 (역할3, 이동건) - hash 매트릭스 실험용
+add_executable(dataset_generator
+        dataset_generator.cpp)
+
 # ===== 매칭 알고리즘들 =====
 # bruteforce (모든 알고리즘 비교의 벤치마크)
 add_executable(bruteforce

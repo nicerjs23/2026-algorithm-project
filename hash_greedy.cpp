@@ -10,16 +10,20 @@
 //   3) 후보 위치마다 read 전체를 비교 (extend) 하여 mismatch 카운트
 //      -> mismatch 가 가장 작은 위치를 Greedy 하게 선택
 //
-//  [bruteforce 와의 비교 포인트]
-//   - bruteforce: O(N * M * L) = ~3 * 10^12 연산
-//   - hash+greedy: O(N) 인덱스 구축 + read 당 평균 O(후보수 * L)
-//     -> 후보수가 평균 ~1개 가까이면 사실상 O(M * L)
+//  [InDel 에 대한 의도된 약점]
+//   - Greedy 는 "글자 단위 1:1 일치 카운트" 만 한다.
+//   - read 에 삽입/결실이 생기면 그 뒤 글자가 통째로 밀려 mismatch 가 폭증한다.
+//   -> InDel 환경에서 무너지도록 설계 (보고서 비교축: Greedy vs DP).
 //
-//  [측정 항목]
-//   - Index 구축 시간 / Search 시간 / 총 메모리
-//   - Mapping rate    : 매핑 성공 read / 전체 read
-//   - Position 정확도 : 정답 start_pos 와 일치한 read / 전체 read
-//   - 재구축 일치율    : reconstructed vs original 글자 일치율
+//  [실험 자동화 - 한 번 실행으로 전체 매트릭스]
+//   dataset_generator 가 만든 SNP별 reference + 공용 reads 를 사용해
+//   SNP 4종(0.1/1/2/5%) × 데이터셋 4종(baseline/indel/end_heavy/yeast)을
+//   순서대로 모두 매핑하고 results_hash.csv 에 누적 저장한다.
+//   (reference 만 SNP별, reads 는 SNP 무관이라 공용 1벌)
+//   같은 reference 를 쓰는 synthetic 3종은 인덱스를 1번만 구축해 재사용.
+//
+//  [측정 항목 (다른 알고리즘 파일과 동일 포맷)]
+//   - 걸린 시간 / 메모리 / N / 불일치 글자 수 / 재구축 일치율(정확도)
 // =============================================================
 
 #include <iostream>
@@ -28,6 +32,7 @@
 #include <string>
 #include <unordered_map>
 #include <ctime>
+#include <iomanip>
 
 // ---- 플랫폼별 메모리 측정 / 콘솔 인코딩 분기 ----
 #ifdef _WIN32
@@ -42,11 +47,25 @@ using namespace std;
 // ──────────────── 파라미터 ────────────────
 static const int SEED_LEN     = 10;  // k-mer 길이 (L=30, D=2 -> L/(D+1)=10)
 static const int MAX_MISMATCH = 2;   // 허용 mismatch 한계
+
+static const string CSV_FILE   = "results_hash.csv";
+static const string ALGO_NAME  = "hash_greedy";
 // ──────────────────────────────────────────
 
 struct Read {
     int start_pos;   // 정답 위치 (reads.txt 에 기록된 0-based)
     string seq;
+};
+
+// SNP 비율 한 단계 (라벨 + CSV 표기)
+struct SnpLevel { string label; string pct; };
+
+// 데이터셋 정의 (reference 는 SNP별, reads/original 은 공용)
+struct DatasetDef {
+    string label;        // CSV dataset 컬럼
+    string ref_prefix;   // reference_<prefix>_snp<label>.txt
+    string reads;        // 공용 reads 파일
+    string original;     // 정답 원본
 };
 
 double check_memory() {
@@ -55,25 +74,19 @@ double check_memory() {
     GetProcessMemoryInfo(GetCurrentProcess(), &pmc, sizeof(pmc));
     return (double)pmc.WorkingSetSize / (1024.0 * 1024.0);
 #else
-    // POSIX (macOS / Linux): getrusage 로 최대 RSS 측정
     struct rusage ru;
     getrusage(RUSAGE_SELF, &ru);
   #ifdef __APPLE__
-    // macOS: ru_maxrss 는 바이트 단위
-    return (double)ru.ru_maxrss / (1024.0 * 1024.0);
+    return (double)ru.ru_maxrss / (1024.0 * 1024.0);   // macOS: 바이트
   #else
-    // Linux: ru_maxrss 는 킬로바이트 단위
-    return (double)ru.ru_maxrss / 1024.0;
+    return (double)ru.ru_maxrss / 1024.0;              // Linux: 킬로바이트
   #endif
 #endif
 }
 
 string readReference(const string& filename) {
     ifstream input(filename);
-    if (!input.is_open()) {
-        cerr << "Error " << filename << " open fail.\n";
-        return "";
-    }
+    if (!input.is_open()) return "";
     string content;
     getline(input, content);
     return content;
@@ -82,10 +95,7 @@ string readReference(const string& filename) {
 vector<Read> readReads(const string& filename) {
     ifstream input(filename);
     vector<Read> reads;
-    if (!input.is_open()) {
-        cerr << "Error " << filename << " open fail.\n";
-        return reads;
-    }
+    if (!input.is_open()) return reads;
     reads.reserve(100000);
     string line;
     getline(input, line);  // 헤더 스킵
@@ -101,12 +111,9 @@ vector<Read> readReads(const string& filename) {
 }
 
 // Reference 에 대해 k-mer 해시 인덱스 구축
-// key   : 길이 k 의 substring
-// value : reference 내에서 해당 substring 이 시작되는 위치들
 unordered_map<string, vector<int>> buildHashIndex(const string& ref, int k) {
     unordered_map<string, vector<int>> index;
-    index.reserve(ref.size());  // 충돌 줄이기
-
+    index.reserve(ref.size());
     const int limit = (int)ref.size() - k;
     for (int i = 0; i <= limit; ++i) {
         index[ref.substr(i, k)].push_back(i);
@@ -114,8 +121,7 @@ unordered_map<string, vector<int>> buildHashIndex(const string& ref, int k) {
     return index;
 }
 
-// Hash + Greedy 로 read 의 매핑 위치 찾기
-// 반환: best 위치 (없으면 -1)
+// Hash + Greedy 로 read 의 매핑 위치 찾기 (없으면 -1)
 int hashGreedySearch(
     const string& ref,
     const unordered_map<string, vector<int>>& index,
@@ -130,7 +136,6 @@ int hashGreedySearch(
     int best_mm  = max_mismatch + 1;
 
     // 비둘기집 원리: read 를 (D+1) 등분하여 각 조각을 seed 로 사용
-    // mismatch <= D 이면 셋 중 적어도 하나는 perfect match -> hash 조회로 잡힘
     const int num_seeds = max_mismatch + 1;
     for (int s = 0; s < num_seeds; ++s) {
         const int seed_offset = s * k;
@@ -140,7 +145,6 @@ int hashGreedySearch(
         auto it = index.find(seed);
         if (it == index.end()) continue;
 
-        // 각 후보 위치에서 read 전체를 비교 (extend 단계)
         for (int hit : it->second) {
             const int cand = hit - seed_offset;
             if (cand < 0 || cand + L > N) continue;
@@ -162,154 +166,132 @@ int hashGreedySearch(
     return best_pos;
 }
 
+// 결과 1줄을 results_hash.csv 에 누적 (bruteforce.csv 와 동일 스키마)
+void appendResultCsv(const string& algorithm, const string& dataset, const string& snp,
+                     double total_sec, double memory, double mapped_pct, double recon_pct) {
+    bool is_new = false;
+    {
+        ifstream check(CSV_FILE);
+        if (!check.is_open()) is_new = true;
+    }
+    ofstream csv(CSV_FILE, ios::app);
+    if (!csv.is_open()) { cerr << "[경고] " << CSV_FILE << " 저장 실패\n"; return; }
+    if (is_new)
+        csv << "algorithm,dataset,snp_rate,total_sec,memory_mb,mapped_pct,reconstruct_pct\n";
+    csv << fixed << setprecision(2)
+        << algorithm << "," << dataset << "," << snp << ","
+        << total_sec << "," << memory << "," << mapped_pct << "," << recon_pct << "\n";
+}
+
+// 이미 로드된 reference/index + reads/original 로 한 셀(SNP×데이터셋)을 매핑·기록
+void mapCell(const string& reference,
+             const unordered_map<string, vector<int>>& index,
+             double index_time,
+             const vector<Read>& reads, const string& original,
+             const string& dataset_label, const string& snp_pct) {
+
+    const int N = (int)reference.size();
+    string reconstructed(N, '-');
+
+    const int total = (int)reads.size();
+    int mapped = 0, correct_position = 0;
+
+    clock_t t_s = clock();
+    for (int i = 0; i < total; ++i) {
+        int pos = hashGreedySearch(reference, index, reads[i].seq, SEED_LEN, MAX_MISMATCH);
+        if (pos != -1) {
+            ++mapped;
+            if (pos == reads[i].start_pos) ++correct_position;
+
+            // Greedy 재구축: 1:1 선형 복사 (InDel 보정 없음 = 의도된 약점)
+            const int L = (int)reads[i].seq.size();
+            for (int j = 0; j < L; ++j)
+                if (pos + j < N) reconstructed[pos + j] = reads[i].seq[j];
+        }
+    }
+    double search_time = (double)(clock() - t_s) / CLOCKS_PER_SEC;
+
+    int mismatched = 0;
+    for (int i = 0; i < N; ++i)
+        if (reconstructed[i] != original[i]) ++mismatched;
+
+    double memory              = check_memory();
+    double elapsed_sec         = index_time + search_time;
+    double mapping_rate        = 100.0 * mapped           / total;
+    double pos_acc             = 100.0 * correct_position / total;
+    double reconstruction_rate = 100.0 * (N - mismatched) / N;
+
+    cout.setf(ios::fixed);
+    cout.precision(2);
+    cout << "\n----- [" << dataset_label << "] SNP " << snp_pct << " -----\n";
+    cout << "걸린 시간              : " << elapsed_sec         << " 초\n";
+    cout << "사용 중인 메모리 크기   : " << memory              << " MB\n";
+    cout << "총 원본 염기서열 길이(N): " << N                   << "\n";
+    cout << "일치하지 않는 글자 수   : " << mismatched          << " 개 (미복구 빈칸 포함)\n";
+    cout << "재구축 일치율(정확도)   : " << reconstruction_rate << "%\n";
+    cout << "  (참고) 매핑 성공률    : " << mapping_rate << "%  /  정답 위치 일치율 : " << pos_acc << "%\n";
+
+    appendResultCsv(ALGO_NAME, dataset_label, snp_pct,
+                    elapsed_sec, memory, mapping_rate, reconstruction_rate);
+}
+
 int main() {
 #ifdef _WIN32
     SetConsoleOutputCP(65001);  // Windows 콘솔 UTF-8
 #endif
 
-    // ────── 데이터셋 선택 (사용할 한 묶음만 주석 풀고 나머지는 닫기) ──────
-    // [기본] 인공 서열
-    string reference_file = "reference_synthetic.txt";
-    string reads_file     = "reads_synthetic.txt";
-    string original_file  = "original_synthetic_1M.txt";
+    const vector<SnpLevel> snp_levels = {
+        {"1", "0.1%"}, {"10", "1.0%"}, {"20", "2.0%"}, {"50", "5.0%"},
+    };
+    const vector<DatasetDef> datasets = {
+        {"baseline",  "reference_synthetic", "reads_baseline.txt",  "original_synthetic_1M.txt"},
+        {"indel",     "reference_synthetic", "reads_indel.txt",     "original_synthetic_1M.txt"},
+        {"end_heavy", "reference_synthetic", "reads_end_heavy.txt", "original_synthetic_1M.txt"},
+        {"yeast",     "reference_yeast",     "reads_yeast.txt",     "original_yeast_1M.txt"},
+    };
 
-    // [비교] 빵효모 (반복서열 영향 확인)
-    //string reference_file = "reference_yeast.txt";
-    //string reads_file     = "reads_yeast.txt";
-    //string original_file  = "original_yeast_1M.txt";
+    cout << "=== Hash Table + Greedy 전체 매트릭스 실험 ===\n";
 
-    // [Trap] Baseline (에러 없는 깨끗한 read)
-    //string reference_file = "reference_synthetic.txt";
-    //string reads_file     = "reads_baseline.txt";
-    //string original_file  = "original_synthetic_1M.txt";
+    for (const auto& snp : snp_levels) {
+        // 같은 reference 파일은 인덱스를 1번만 구축해 재사용
+        string cur_ref_file;
+        string reference;
+        unordered_map<string, vector<int>> index;
+        double index_time = 0.0;
 
-    // [Trap] InDel (삽입/결실 폭격 - Greedy 의 약점 노출)
-    //string reference_file = "reference_synthetic.txt";
-    //string reads_file     = "reads_indel.txt";
-    //string original_file  = "original_synthetic_1M.txt";
+        for (const auto& ds : datasets) {
+            string ref_file = ds.ref_prefix + "_snp" + snp.label + ".txt";
 
-    // [Trap] End-Heavy (read 후반부에 에러 집중)
-    //string reference_file = "reference_synthetic.txt";
-    //string reads_file     = "reads_end_heavy.txt";
-    //string original_file  = "original_synthetic_1M.txt";
-    // ────────────────────────────────────────────────────────────
-
-    cout << "데이터 로딩 중...\n";
-    cout << "  Reference: " << reference_file << "\n";
-    cout << "  Reads    : " << reads_file     << "\n";
-    string reference_genome = readReference(reference_file);
-    vector<Read> reads      = readReads(reads_file);
-    string original_seq     = readReference(original_file);
-
-    if (reference_genome.empty() || reads.empty()) {
-        cerr << "Error: 데이터 로딩 실패\n";
-        return 1;
-    }
-
-    cout << "Hash Table + Greedy mapping...\n";
-
-    // ──────────────── [1/2] 인덱스 구축 ────────────────
-    cout << "  [1/2] Hash index 구축 (k=" << SEED_LEN << ") ...\n";
-    clock_t t_index_start = clock();
-    auto index = buildHashIndex(reference_genome, SEED_LEN);
-    clock_t t_index_end = clock();
-    double index_time = (double)(t_index_end - t_index_start) / CLOCKS_PER_SEC;
-    cout << "        unique " << SEED_LEN << "-mer: " << index.size() << " 개\n";
-
-    // 평균/최대 후보 수 (repeat 영향 측정 지표)
-    size_t bucket_max = 0, bucket_sum = 0;
-    for (auto& kv : index) {
-        bucket_sum += kv.second.size();
-        if (kv.second.size() > bucket_max) bucket_max = kv.second.size();
-    }
-    double bucket_avg = (double)bucket_sum / index.size();
-
-    // ──────────────── [2/2] read 매핑 ────────────────
-    cout << "  [2/2] read 매핑 중...\n";
-    clock_t t_search_start = clock();
-
-    const int N = (int)reference_genome.size();
-    string reconstructed_seq(N, '-');
-
-    int total            = (int)reads.size();
-    int mapped           = 0;  // 매핑 성공
-    int correct_position = 0;  // 정답 start_pos 와 일치
-
-    const int progress_step = total / 10;
-    for (int i = 0; i < total; ++i) {
-        int pos = hashGreedySearch(reference_genome, index, reads[i].seq,
-                                   SEED_LEN, MAX_MISMATCH);
-
-        if (pos != -1) {
-            ++mapped;
-            if (pos == reads[i].start_pos) ++correct_position;
-
-            const int L = (int)reads[i].seq.size();
-            for (int j = 0; j < L; ++j) {
-                if (pos + j < N)
-                    reconstructed_seq[pos + j] = reads[i].seq[j];
+            // reference 캐시 갱신 (파일이 바뀔 때만 로드/인덱싱)
+            if (ref_file != cur_ref_file) {
+                string r = readReference(ref_file);
+                if (r.empty()) {
+                    cout << "\n[건너뜀] " << ref_file << " 없음 -> ["
+                         << ds.label << "] SNP " << snp.pct << "\n";
+                    cur_ref_file.clear();
+                    continue;
+                }
+                reference = std::move(r);
+                clock_t t = clock();
+                index = buildHashIndex(reference, SEED_LEN);
+                index_time = (double)(clock() - t) / CLOCKS_PER_SEC;
+                cur_ref_file = ref_file;
+            } else if (reference.empty()) {
+                continue;  // 직전 reference 로드 실패 상태
             }
-        }
 
-        if (progress_step > 0 && (i + 1) % progress_step == 0) {
-            cout << "  Progress: " << (i + 1) << " / " << total
-                 << " (" << (100 * (i + 1) / total) << "%)\n";
+            vector<Read> reads = readReads(ds.reads);
+            string original    = readReference(ds.original);
+            if (reads.empty() || original.empty()) {
+                cout << "\n[건너뜀] reads/original 없음 -> [" << ds.label
+                     << "] SNP " << snp.pct << " (" << ds.reads << " / " << ds.original << ")\n";
+                continue;
+            }
+
+            mapCell(reference, index, index_time, reads, original, ds.label, snp.pct);
         }
     }
 
-    clock_t t_search_end = clock();
-    double search_time = (double)(t_search_end - t_search_start) / CLOCKS_PER_SEC;
-
-    // ──────────────── 재구축 일치율 ────────────────
-    int mismatched = 0;
-    for (int i = 0; i < N; ++i) {
-        if (reconstructed_seq[i] != original_seq[i])
-            ++mismatched;
-    }
-
-    double memory       = check_memory();
-    double total_time   = index_time + search_time;
-    double mapping_rate = 100.0 * mapped           / total;
-    double pos_acc      = 100.0 * correct_position / total;
-    double correct_rate = 100.0 * (N - mismatched) / N;
-
-    cout.setf(ios::fixed);
-    cout.precision(2);
-
-    cout << "\n=========== Hash Table + Greedy 결과 ===========\n";
-    cout << "[데이터셋]\n";
-    cout << "  Reference : " << reference_file << "\n";
-    cout << "  Reads     : " << reads_file     << "\n";
-    cout << "[시간]\n";
-    cout << "  Index 구축 시간     : " << index_time   << " 초\n";
-    cout << "  Search 시간         : " << search_time  << " 초\n";
-    cout << "  총 실행 시간        : " << total_time   << " 초\n";
-    cout << "[메모리]\n";
-    cout << "  사용 중 메모리      : " << memory       << " MB\n";
-    cout << "[인덱스 통계]\n";
-    cout << "  unique k-mer 수    : " << index.size() << "\n";
-    cout << "  k-mer 당 평균 위치  : " << bucket_avg   << " 개\n";
-    cout << "  k-mer 당 최대 위치  : " << bucket_max   << " 개 (repeat 지표)\n";
-    cout << "[정확도]\n";
-    cout << "  총 read 수         : " << total            << "\n";
-    cout << "  매핑 성공 read     : " << mapped           << " (" << mapping_rate << "%)\n";
-    cout << "  정답 위치 일치     : " << correct_position << " (" << pos_acc      << "%)\n";
-    cout << "  재구축 일치율      : " << correct_rate     << "%\n";
-    cout << "  불일치 글자 수     : " << mismatched       << " / " << N << "\n";
-    cout << "================================================\n";
-
-    // 재구축된 염기서열 파일 저장
-    ofstream fout("reconstructed_hash_greedy.txt");
-    if (fout.is_open()) {
-        fout << ">reconstructed_sequence_hash_greedy\n";
-        for (int i = 0; i < N; i += 60) {
-            fout << reconstructed_seq.substr(i, 60) << "\n";
-        }
-        fout.close();
-        cout << "재구축 서열 저장 완료  : reconstructed_hash_greedy.txt\n";
-    } else {
-        cerr << "Error: reconstructed_hash_greedy.txt 저장 실패\n";
-    }
-
+    cout << "\n[완료] 결과가 " << CSV_FILE << " 에 누적 저장되었습니다.\n";
     return 0;
 }
